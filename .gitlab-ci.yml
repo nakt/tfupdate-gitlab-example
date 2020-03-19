@@ -1,0 +1,65 @@
+image:
+  name: tfupdate:latest
+  entrypoint: [""]
+
+variables:
+  DOCKER_TLS_CERTDIR: ""
+  GIT_STRATEGY: clone
+  BASE_BRANCH: master
+  TFUPDATE_ARGS: "-r ./"
+  PROVIDER_NAME: aws
+
+stages:
+  - check_terraform_version
+  - check_provider_version
+
+before_script:
+  - git config --local user.name "$GIT_USER_NAME"
+  - git config --local user.email "$GIT_USER_MAIL"
+  - git remote set-url origin http://oauth2:$LAB_CORE_TOKEN@$CI_SERVER_HOST/$CI_PROJECT_PATH.git
+
+check_provider_version:
+  stage: check_provider_version
+  only:
+    - master
+  script: |
+    VERSION=$(tfupdate release latest terraform-providers/terraform-provider-$PROVIDER_NAME)
+    UPDATE_MESSAGE="[tfupdate] Update terraform-provider-$PROVIDER_NAME to v${VERSION}"
+    if lab mr list -s "opened" | grep -F "$UPDATE_MESSAGE"; then
+      echo "A pull request already exists"
+    elif lab mr list -s "merged" | grep -F "$UPDATE_MESSAGE"; then
+      echo "A pull request is already merged"
+    else
+      git checkout -b update-terraform-provider-$PROVIDER_NAME-to-v${VERSION} origin/$BASE_BRANCH
+      tfupdate provider $PROVIDER_NAME -v ${VERSION} $TFUPDATE_ARGS
+      if git add . && git diff --cached --exit-code --quiet; then
+        echo "No changes"
+      else
+        lab commit -m "$UPDATE_MESSAGE"
+        PULL_REQUEST_BODY="For details see: https://github.com/terraform-providers/terraform-provider-$PROVIDER_NAME/releases"
+        lab push origin HEAD && lab mr create -m "$UPDATE_MESSAGE" -m "$PULL_REQUEST_BODY"
+      fi
+    fi
+
+check_terraform_version:
+  stage: check_terraform_version
+  only:
+    - master
+  script: |
+    VERSION=$(tfupdate release latest hashicorp/terraform)
+    UPDATE_MESSAGE="[tfupdate] Update terraform to v${VERSION}"
+    if lab mr list -s "opened" | grep -F "$UPDATE_MESSAGE"; then
+      echo "A pull request already exists"
+    elif lab mr list -s "merged" | grep -F "$UPDATE_MESSAGE"; then
+      echo "A pull request is already merged"
+    else
+      lab checkout -b update-terraform-to-v${VERSION} origin/$BASE_BRANCH
+      tfupdate terraform -v ${VERSION} $TFUPDATE_ARGS
+      if git add . && git diff --cached --exit-code --quiet; then
+        echo "No changes"
+      else
+        lab commit -m "$UPDATE_MESSAGE"
+        PULL_REQUEST_BODY="For details see: https://github.com/hashicorp/terraform/releases"
+        lab push origin HEAD && lab mr create -m "$UPDATE_MESSAGE" -m "$PULL_REQUEST_BODY"
+      fi
+    fi
